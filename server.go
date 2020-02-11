@@ -2,9 +2,11 @@ package httpsrv
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"sort"
+	"sync/atomic"
 
 	"github.com/jonasi/ctxlog"
 	"github.com/julienschmidt/httprouter"
@@ -19,7 +21,8 @@ func New(addr string) *Server {
 			Addr:    addr,
 			Handler: mux,
 		},
-		ch: make(chan error),
+		serveCh: make(chan struct{}),
+		shutCh:  make(chan struct{}),
 	}
 
 	return s
@@ -31,7 +34,11 @@ type Server struct {
 	middleware []Middleware
 	router     *httprouter.Router
 	routes     routes
-	ch         chan error
+	state      int32 // 0: initial, 1: started, 2: stopped
+	serveCh    chan struct{}
+	serveErr   error
+	shutCh     chan struct{}
+	shutErr    error
 }
 
 // Handle registers the provided handler with the router
@@ -46,6 +53,10 @@ func (s *Server) AddMiddleware(mw ...Middleware) {
 
 // Start starts the server
 func (s *Server) Start(ctx context.Context) error {
+	if !atomic.CompareAndSwapInt32(&s.state, 0, 1) {
+		return errors.New("Attempting to start a server that has already been started")
+	}
+
 	s.server.BaseContext = func(_ net.Listener) context.Context {
 		return ctx
 	}
@@ -75,7 +86,8 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	go func() {
-		s.ch <- s.server.Serve(l)
+		s.serveErr = s.server.Serve(l)
+		close(s.serveCh)
 	}()
 
 	return nil
@@ -83,12 +95,24 @@ func (s *Server) Start(ctx context.Context) error {
 
 // Stop stops the server
 func (s *Server) Stop(ctx context.Context) error {
-	return s.server.Shutdown(ctx)
+	if !atomic.CompareAndSwapInt32(&s.state, 1, 2) {
+		return errors.New("Attempting to stop a server that is not running")
+	}
+
+	s.shutErr = s.server.Shutdown(ctx)
+	close(s.shutCh)
+	return s.shutErr
 }
 
 // Wait returns when the server has been shut down
 func (s *Server) Wait() error {
-	return <-s.ch
+	<-s.serveCh
+	if s.serveErr != http.ErrServerClosed {
+		return s.serveErr
+	}
+
+	<-s.shutCh
+	return s.shutErr
 }
 
 type route struct {
