@@ -18,7 +18,7 @@ func HandleAssets(s *Server, prefix string, fs http.FileSystem) {
 		prefix = prefix + "/"
 	}
 
-	s.Handle("GET", prefix+"*splat", http.StripPrefix(prefix, http.FileServer(fs)))
+	s.Handle(&Route{Method: "GET", Path: prefix + "*splat", Handler: http.StripPrefix(prefix, http.FileServer(fs))})
 }
 
 // TemplateHandler returns an http.Handler that renders the provided template
@@ -66,7 +66,7 @@ func (c SPAConf) Init(s *Server) error {
 	})
 
 	for _, p := range c.IndexPaths {
-		s.Handle("GET", p, indexHandler)
+		s.Handle(&Route{Method: "GET", Path: p, Handler: indexHandler})
 	}
 
 	HandleAssets(s, c.AssetPrefix, assets)
