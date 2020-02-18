@@ -22,6 +22,8 @@ const (
 // New returns an initialized Server
 func New(addr string) *Server {
 	mux := httprouter.New()
+	mux.HandleMethodNotAllowed = false
+
 	s := &Server{
 		router: mux,
 		addr:   []string{addr},
@@ -40,6 +42,7 @@ type Server struct {
 	middleware []Middleware
 	router     *httprouter.Router
 	routes     routes
+	notFound   http.Handler
 	mu         sync.Mutex
 	state      int
 	serveCh    []chan struct{}
@@ -68,6 +71,17 @@ func (s *Server) Handle(rts ...*Route) {
 	}
 
 	s.routes = append(s.routes, rts...)
+}
+
+// HandleNotFound registers a handler to run when a method is not found
+func (s *Server) HandleNotFound(h http.Handler) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != stateEmpty {
+		panic("Attempting to register routes after the server has started")
+	}
+
+	s.notFound = h
 }
 
 // AddMiddleware adds global middleware to the server
@@ -101,21 +115,32 @@ func (s *Server) Start(ctx context.Context) error {
 	return s.initListeners(ctx)
 }
 
+var allMethods = []string{http.MethodPut, http.MethodGet, http.MethodPost, http.MethodHead, http.MethodTrace, http.MethodPatch, http.MethodDelete, http.MethodOptions, http.MethodConnect}
+
 func (s *Server) initRoutes(ctx context.Context) {
 	sort.Sort(s.routes)
 	for _, r := range s.routes {
-		ctxlog.Infof(ctx, "Handling route: %s %s", r.Method, r.Path)
 		h := r.Handler
-
 		for i := len(r.Middleware) - 1; i >= 0; i-- {
 			h = r.Middleware[i].Handler(r.Method, r.Path, h)
 		}
-
 		for i := len(s.middleware) - 1; i >= 0; i-- {
 			h = s.middleware[i].Handler(r.Method, r.Path, h)
 		}
 
-		s.router.Handler(r.Method, r.Path, h)
+		if r.Method == "*" {
+			ctxlog.Infof(ctx, "Handling all methods for path: %s", r.Path)
+			for _, method := range allMethods {
+				s.router.Handler(method, r.Path, h)
+			}
+		} else {
+			ctxlog.Infof(ctx, "Handling route: %-9s %s", r.Method, r.Path)
+			s.router.Handler(r.Method, r.Path, h)
+		}
+	}
+
+	if s.notFound != nil {
+		s.router.NotFound = s.notFound
 	}
 }
 
@@ -130,7 +155,7 @@ func (s *Server) initListeners(ctx context.Context) error {
 
 		switch {
 		case strings.HasPrefix(addr, "unix://"):
-			l, err = net.Listen("unix", addr[8:])
+			l, err = net.Listen("unix", addr[7:])
 		default:
 			l, err = net.Listen("tcp", addr)
 		}
