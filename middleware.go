@@ -4,7 +4,9 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/jonasi/httpsrv/h2c"
 	apachelog "github.com/lestrrat-go/apache-logformat"
+	"golang.org/x/net/http2"
 )
 
 // Middleware takes an http route and spits out a new handler
@@ -26,3 +28,13 @@ func AccessLogger(w io.Writer) Middleware {
 		return apachelog.CombinedLog.Wrap(h, w)
 	})
 }
+
+// H2C wraps a handler and provides support for upgrading to h2c
+var H2C Middleware = MiddlewareFunc(func(method, path string, h http.Handler) http.Handler {
+	s := &http2.Server{}
+	h = h2c.NewHandler(h, s)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r)
+	})
+})
