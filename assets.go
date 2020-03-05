@@ -2,8 +2,8 @@ package httpsrv
 
 import (
 	"encoding/json"
+	"html/template"
 	"net/http"
-	"text/template"
 
 	"github.com/jonasi/ctxlog"
 	"github.com/rakyll/statik/fs"
@@ -35,6 +35,7 @@ func TemplateHandler(t *template.Template, data interface{}) http.Handler {
 type SPAConf struct {
 	IndexTemplate         string
 	IndexTemplateEntryVar string
+	IndexTemplateData     map[string]interface{}
 	IndexPaths            []string
 	DevAssetsPath         string
 	AssetFile             string
@@ -76,7 +77,12 @@ func (c SPAConf) mkIndexHandler(assets http.FileSystem) (http.Handler, error) {
 		return nil, err
 	}
 
-	return TemplateHandler(index, map[string]interface{}{
-		"index_file": js["main"]["js"],
-	}), nil
+	data := c.IndexTemplateData
+	if data == nil {
+		data = map[string]interface{}{}
+	}
+
+	data[c.IndexTemplateEntryVar] = js["main"]["js"]
+
+	return TemplateHandler(index, data), nil
 }
