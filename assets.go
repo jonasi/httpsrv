@@ -43,27 +43,15 @@ type SPAConf struct {
 
 // Init initializes all the routes and confs for SPAConf
 func (c SPAConf) Init(s *Server) error {
-	index, err := template.ParseFiles(c.IndexTemplate)
-	if err != nil {
-		return err
-	}
-
 	assets, err := c.fs()
 	if err != nil {
 		return err
 	}
-	b, err := fs.ReadFile(assets, c.AssetFile)
+
+	indexHandler, err := c.indexHandler(assets)
 	if err != nil {
 		return err
 	}
-	var js map[string]map[string]string
-	if err := json.Unmarshal(b, &js); err != nil {
-		return err
-	}
-
-	indexHandler := TemplateHandler(index, map[string]interface{}{
-		"index_file": js["main"]["js"],
-	})
 
 	for _, p := range c.IndexPaths {
 		s.Handle(&Route{Method: "GET", Path: p, Handler: indexHandler})
@@ -71,4 +59,24 @@ func (c SPAConf) Init(s *Server) error {
 
 	HandleAssets(s, c.AssetPrefix, assets)
 	return nil
+}
+
+func (c SPAConf) mkIndexHandler(assets http.FileSystem) (http.Handler, error) {
+	index, err := template.ParseFiles(c.IndexTemplate)
+	if err != nil {
+		return nil, err
+	}
+
+	b, err := fs.ReadFile(assets, c.AssetFile)
+	if err != nil {
+		return nil, err
+	}
+	var js map[string]map[string]string
+	if err := json.Unmarshal(b, &js); err != nil {
+		return nil, err
+	}
+
+	return TemplateHandler(index, map[string]interface{}{
+		"index_file": js["main"]["js"],
+	}), nil
 }
