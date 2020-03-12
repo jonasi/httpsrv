@@ -70,6 +70,15 @@ func (s *Server) HandleNotFound(h http.Handler) {
 	s.notFound = h
 }
 
+// NotFoundHandler returns the registered not found handler
+func (s *Server) NotFoundHandler() http.Handler {
+	if s.notFound != nil {
+		return s.notFound
+	}
+
+	return http.NotFoundHandler()
+}
+
 // AddMiddleware adds global middleware to the server
 func (s *Server) AddMiddleware(mw ...Middleware) {
 	if atomic.LoadInt32(&s.started) == 1 {
@@ -116,10 +125,7 @@ func (s *Server) initRoutes(ctx context.Context) {
 		}
 	}
 
-	nf := s.notFound
-	if nf == nil {
-		nf = http.NotFoundHandler()
-	}
+	nf := s.NotFoundHandler()
 	for i := len(s.middleware) - 1; i >= 0; i-- {
 		nf = s.middleware[i].Handler("", "", nf)
 	}

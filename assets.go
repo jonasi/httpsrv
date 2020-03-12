@@ -22,10 +22,13 @@ func HandleAssets(s *Server, prefix string, fs http.FileSystem) {
 }
 
 // TemplateHandler returns an http.Handler that renders the provided template
-func TemplateHandler(t *template.Template, data interface{}) http.Handler {
+func TemplateHandler(t *template.Template, fn func(*http.Request) interface{}) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data := fn(r)
 		if err := t.Execute(w, data); err != nil {
 			ctxlog.Errorf(r.Context(), "Template render error: %s", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
 		}
 	})
 }
@@ -33,13 +36,12 @@ func TemplateHandler(t *template.Template, data interface{}) http.Handler {
 // SPAConf is a helper for defining routes and
 // asset handling for single page apps
 type SPAConf struct {
-	IndexTemplate         string
-	IndexTemplateEntryVar string
-	IndexTemplateData     map[string]interface{}
-	IndexPaths            []string
-	DevAssetsPath         string
-	AssetFile             string
-	AssetPrefix           string
+	IndexTemplateFile string
+	IndexTemplateData func(*http.Request, map[string]string) interface{}
+	IndexFilter       func(*http.Request) bool
+	DevAssetsPath     string
+	AssetFile         string
+	AssetPrefix       string
 }
 
 // Init initializes all the routes and confs for SPAConf
@@ -54,16 +56,24 @@ func (c SPAConf) Init(s *Server) error {
 		return err
 	}
 
-	for _, p := range c.IndexPaths {
-		s.Handle(&Route{Method: "GET", Path: p, Handler: indexHandler})
-	}
+	// use (abuse?) the not found mechanism to load the client
+	// only do it for GET requests that pass the provided IndexFilter method
+	oldNF := s.NotFoundHandler()
+	s.HandleNotFound(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := oldNF
+		if c.IndexFilter != nil && r.Method == http.MethodGet && c.IndexFilter(r) {
+			h = indexHandler
+		}
+
+		h.ServeHTTP(w, r)
+	}))
 
 	HandleAssets(s, c.AssetPrefix, assets)
 	return nil
 }
 
 func (c SPAConf) mkIndexHandler(assets http.FileSystem) (http.Handler, error) {
-	index, err := template.ParseFiles(c.IndexTemplate)
+	index, err := template.ParseFiles(c.IndexTemplateFile)
 	if err != nil {
 		return nil, err
 	}
@@ -77,12 +87,7 @@ func (c SPAConf) mkIndexHandler(assets http.FileSystem) (http.Handler, error) {
 		return nil, err
 	}
 
-	data := c.IndexTemplateData
-	if data == nil {
-		data = map[string]interface{}{}
-	}
-
-	data[c.IndexTemplateEntryVar] = js["main"]["js"]
-
-	return TemplateHandler(index, data), nil
+	return TemplateHandler(index, func(r *http.Request) interface{} {
+		return c.IndexTemplateData(r, js["main"])
+	}), nil
 }
