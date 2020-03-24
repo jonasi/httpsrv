@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/jonasi/ctxlog"
-	"github.com/rakyll/statik/fs"
 )
 
 // HandleAssets registers an http.Handler to handle static assets
@@ -36,22 +35,17 @@ func TemplateHandler(t *template.Template, fn func(*http.Request) interface{}) h
 // SPAConf is a helper for defining routes and
 // asset handling for single page apps
 type SPAConf struct {
-	IndexTemplateFile string
+	IndexTemplate     *template.Template
 	IndexTemplateData func(*http.Request, map[string]string) interface{}
 	IndexFilter       func(*http.Request) bool
-	DevAssetsPath     string
+	Assets            http.FileSystem
 	AssetFile         string
 	AssetPrefix       string
 }
 
 // Init initializes all the routes and confs for SPAConf
 func (c SPAConf) Init(s *Server) error {
-	assets, err := c.fs()
-	if err != nil {
-		return err
-	}
-
-	indexHandler, err := c.indexHandler(assets)
+	indexHandler, err := c.indexHandler(c.Assets)
 	if err != nil {
 		return err
 	}
@@ -68,17 +62,12 @@ func (c SPAConf) Init(s *Server) error {
 		h.ServeHTTP(w, r)
 	}))
 
-	HandleAssets(s, c.AssetPrefix, assets)
+	HandleAssets(s, c.AssetPrefix, c.Assets)
 	return nil
 }
 
 func (c SPAConf) mkIndexHandler(assets http.FileSystem) (http.Handler, error) {
-	index, err := template.ParseFiles(c.IndexTemplateFile)
-	if err != nil {
-		return nil, err
-	}
-
-	b, err := fs.ReadFile(assets, c.AssetFile)
+	b, err := ReadFile(assets, c.AssetFile)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +76,7 @@ func (c SPAConf) mkIndexHandler(assets http.FileSystem) (http.Handler, error) {
 		return nil, err
 	}
 
-	return TemplateHandler(index, func(r *http.Request) interface{} {
+	return TemplateHandler(c.IndexTemplate, func(r *http.Request) interface{} {
 		return c.IndexTemplateData(r, js["main"])
 	}), nil
 }

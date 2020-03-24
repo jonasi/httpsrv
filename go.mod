@@ -13,7 +13,6 @@ require (
 	github.com/lestrrat-go/apache-logformat v2.0.4+incompatible
 	github.com/lestrrat-go/strftime v1.0.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/rakyll/statik v0.1.6
 	github.com/satori/go.uuid v1.2.0
 	github.com/tebeka/strftime v0.1.3 // indirect
 	golang.org/x/net v0.0.0-20200219183655-46282727080f

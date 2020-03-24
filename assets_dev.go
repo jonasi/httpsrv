@@ -8,10 +8,6 @@ import (
 	"github.com/jonasi/ctxlog"
 )
 
-func (c SPAConf) fs() (http.FileSystem, error) {
-	return http.Dir(c.DevAssetsPath), nil
-}
-
 func (c SPAConf) indexHandler(assets http.FileSystem) (http.Handler, error) {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h, err := c.mkIndexHandler(assets)
