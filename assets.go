@@ -36,7 +36,7 @@ func TemplateHandler(t *template.Template, fn func(*http.Request) interface{}) h
 // asset handling for single page apps
 type SPAConf struct {
 	IndexTemplate     *template.Template
-	IndexTemplateData func(*http.Request, map[string]string) interface{}
+	IndexTemplateData func(*http.Request, map[string]map[string]interface{}) interface{}
 	IndexFilter       func(*http.Request) bool
 	Assets            http.FileSystem
 	AssetFile         string
@@ -71,12 +71,12 @@ func (c SPAConf) mkIndexHandler(assets http.FileSystem) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	var js map[string]map[string]string
+	var js map[string]map[string]interface{}
 	if err := json.Unmarshal(b, &js); err != nil {
 		return nil, err
 	}
 
 	return TemplateHandler(c.IndexTemplate, func(r *http.Request) interface{} {
-		return c.IndexTemplateData(r, js["main"])
+		return c.IndexTemplateData(r, js)
 	}), nil
 }
