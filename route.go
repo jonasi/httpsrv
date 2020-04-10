@@ -7,10 +7,11 @@ import (
 // A Route is the tuple of (method, path, handler) that is registered
 // with the router
 type Route struct {
-	Method     string
-	Path       string
-	Handler    http.Handler
-	Middleware []Middleware
+	Method           string
+	Path             string
+	Handler          http.Handler
+	Middleware       []Middleware
+	MiddlewareFilter func(Middleware) bool
 }
 
 type routes []*Route

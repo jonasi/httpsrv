@@ -107,20 +107,29 @@ func (s *Server) initRoutes(ctx context.Context) {
 	sort.Sort(s.routes)
 	for _, r := range s.routes {
 		h := r.Handler
+		mws := []string{}
 		for i := len(r.Middleware) - 1; i >= 0; i-- {
-			h = r.Middleware[i].Handler(r.Method, r.Path, h)
+			mw := r.Middleware[i]
+			if r.MiddlewareFilter == nil || r.MiddlewareFilter(mw) {
+				mws = append(mws, mw.ID())
+				h = mw.Handler(r.Method, r.Path, h)
+			}
 		}
 		for i := len(s.middleware) - 1; i >= 0; i-- {
-			h = s.middleware[i].Handler(r.Method, r.Path, h)
+			mw := s.middleware[i]
+			if r.MiddlewareFilter == nil || r.MiddlewareFilter(mw) {
+				mws = append(mws, mw.ID())
+				h = mw.Handler(r.Method, r.Path, h)
+			}
 		}
 
 		if r.Method == "*" {
-			ctxlog.Infof(ctx, "Handling all methods for path: %s", r.Path)
+			ctxlog.Infof(ctx, "Handling all methods for path: %s with middleware: %v", r.Path, mws)
 			for _, method := range allMethods {
 				s.router.Handler(method, r.Path, h)
 			}
 		} else {
-			ctxlog.Infof(ctx, "Handling route: %-9s %s", r.Method, r.Path)
+			ctxlog.Infof(ctx, "Handling route: %-9s %s with middleware: %v", r.Method, r.Path, mws)
 			s.router.Handler(r.Method, r.Path, h)
 		}
 	}
