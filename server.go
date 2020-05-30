@@ -34,13 +34,14 @@ func New(addr string) *Server {
 // Server is the http server
 type Server struct {
 	svc.Service
-	addr       []string
-	server     *http.Server
-	middleware []Middleware
-	router     *httprouter.Router
-	routes     routes
-	notFound   http.Handler
-	started    int32
+	addr               []string
+	server             *http.Server
+	middleware         []Middleware
+	router             *httprouter.Router
+	routes             routes
+	notFound           http.Handler
+	notFoundMiddleware []Middleware
+	started            int32
 }
 
 // AddListenAddr adds a new address to listen to when the server starts
@@ -50,6 +51,22 @@ func (s *Server) AddListenAddr(addr string) {
 	}
 
 	s.addr = append(s.addr, addr)
+}
+
+// Lookup finds the associated route that was registered with the provided
+// method and path
+func (s *Server) Lookup(method, path string) *Route {
+	if atomic.LoadInt32(&s.started) == 1 {
+		panic("Attempting to lookup routes after the server has started")
+	}
+
+	for _, r := range s.routes {
+		if r.Method == method && r.Path == path {
+			return r
+		}
+	}
+
+	return nil
 }
 
 // Handle registers the provided route with the router
@@ -62,12 +79,13 @@ func (s *Server) Handle(rts ...*Route) {
 }
 
 // HandleNotFound registers a handler to run when a method is not found
-func (s *Server) HandleNotFound(h http.Handler) {
+func (s *Server) HandleNotFound(h http.Handler, mw ...Middleware) {
 	if atomic.LoadInt32(&s.started) == 1 {
 		panic("Attempting to register routes after the server has started")
 	}
 
 	s.notFound = h
+	s.notFoundMiddleware = mw
 }
 
 // NotFoundHandler returns the registered not found handler
@@ -101,27 +119,41 @@ func (s *Server) start(ctx context.Context) error {
 	return s.initListeners(ctx)
 }
 
+func (s *Server) applyMiddleware(method string, path string, h http.Handler, mw []Middleware) (http.Handler, []string) {
+	var (
+		ids = []string{}
+		all = append(append([]Middleware{}, s.middleware...), mw...)
+	)
+
+	// reverse
+	for i := len(all)/2 - 1; i >= 0; i-- {
+		opp := len(all) - 1 - i
+		all[i], all[opp] = all[opp], all[i]
+	}
+
+	for len(all) > 0 {
+		mw := all[0]
+		all = all[1:]
+
+		// check if the middleware wants to modify the
+		// rest of the middleware list
+		if filter, ok := mw.(MiddlewareFilterer); ok {
+			all = filter.Filter(all)
+		}
+
+		h = mw.Handler(method, path, h)
+		ids = append(ids, mw.ID())
+	}
+
+	return h, ids
+}
+
 var allMethods = []string{http.MethodPut, http.MethodGet, http.MethodPost, http.MethodHead, http.MethodTrace, http.MethodPatch, http.MethodDelete, http.MethodOptions, http.MethodConnect}
 
 func (s *Server) initRoutes(ctx context.Context) {
 	sort.Sort(s.routes)
 	for _, r := range s.routes {
-		h := r.Handler
-		mws := []string{}
-		for i := len(r.Middleware) - 1; i >= 0; i-- {
-			mw := r.Middleware[i]
-			if r.MiddlewareFilter == nil || r.MiddlewareFilter(mw) {
-				mws = append(mws, mw.ID())
-				h = mw.Handler(r.Method, r.Path, h)
-			}
-		}
-		for i := len(s.middleware) - 1; i >= 0; i-- {
-			mw := s.middleware[i]
-			if r.MiddlewareFilter == nil || r.MiddlewareFilter(mw) {
-				mws = append(mws, mw.ID())
-				h = mw.Handler(r.Method, r.Path, h)
-			}
-		}
+		h, mws := s.applyMiddleware(r.Method, r.Path, r.Handler, r.Middleware)
 
 		if r.Method == "*" {
 			ctxlog.Infof(ctx, "Handling all methods for path: %s with middleware: %v", r.Path, mws)
@@ -134,11 +166,8 @@ func (s *Server) initRoutes(ctx context.Context) {
 		}
 	}
 
-	nf := s.NotFoundHandler()
-	for i := len(s.middleware) - 1; i >= 0; i-- {
-		nf = s.middleware[i].Handler("", "", nf)
-	}
-
+	nf, mws := s.applyMiddleware("", "", s.NotFoundHandler(), s.notFoundMiddleware)
+	ctxlog.Infof(ctx, "Handling not found with middleware: %v", mws)
 	s.router.NotFound = nf
 }
 

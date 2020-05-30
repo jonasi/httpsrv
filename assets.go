@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
+	"strings"
 
 	"github.com/jonasi/ctxlog"
 )
 
-// HandleAssets registers an http.Handler to handle static assets
-func HandleAssets(s *Server, prefix string, fs http.FileSystem) {
+func fixPrefix(prefix string) string {
 	if prefix[0] != '/' {
 		prefix = "/" + prefix
 	}
@@ -17,7 +17,19 @@ func HandleAssets(s *Server, prefix string, fs http.FileSystem) {
 		prefix = prefix + "/"
 	}
 
-	s.Handle(&Route{Method: "GET", Path: prefix + "*splat", Handler: http.StripPrefix(prefix, http.FileServer(fs))})
+	return prefix
+}
+
+// AssetsRoute returns a Route to handle static assets
+func AssetsRoute(prefix string, fs http.FileSystem, mws ...Middleware) *Route {
+	prefix = fixPrefix(prefix)
+
+	return &Route{
+		Method:     "GET",
+		Path:       prefix + "*splat",
+		Middleware: mws,
+		Handler:    http.StripPrefix(prefix, http.FileServer(fs)),
+	}
 }
 
 // TemplateHandler returns an http.Handler that renders the provided template
@@ -35,12 +47,15 @@ func TemplateHandler(t *template.Template, fn func(*http.Request) interface{}) h
 // SPAConf is a helper for defining routes and
 // asset handling for single page apps
 type SPAConf struct {
+	Root              string
 	IndexTemplate     *template.Template
 	IndexTemplateData func(*http.Request, map[string]map[string]interface{}) interface{}
 	IndexFilter       func(*http.Request) bool
+	IndexMiddleware   []Middleware
 	Assets            http.FileSystem
 	AssetFile         string
 	AssetPrefix       string
+	AssetMiddleware   []Middleware
 }
 
 // Init initializes all the routes and confs for SPAConf
@@ -54,15 +69,28 @@ func (c SPAConf) Init(s *Server) error {
 	// only do it for GET requests that pass the provided IndexFilter method
 	oldNF := s.NotFoundHandler()
 	s.HandleNotFound(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := oldNF
 		if c.IndexFilter != nil && r.Method == http.MethodGet && c.IndexFilter(r) {
-			h = indexHandler
+			var (
+				h                  = oldNF
+				isGet              = r.Method == http.MethodGet
+				matchesRoot        = c.Root == "" || strings.HasPrefix(r.URL.Path, c.Root)
+				matchesIndexFilter = c.IndexFilter == nil || c.IndexFilter(r)
+			)
+
+			if isGet && matchesRoot && matchesIndexFilter {
+				h = indexHandler
+			}
+
+			h.ServeHTTP(w, r)
 		}
+	}), c.IndexMiddleware...)
 
-		h.ServeHTTP(w, r)
-	}))
+	pref := fixPrefix(c.AssetPrefix)
+	if r := s.Lookup("GET", pref+"*splat"); r == nil {
+		r := AssetsRoute(pref, c.Assets, c.AssetMiddleware...)
+		s.Handle(r)
+	}
 
-	HandleAssets(s, c.AssetPrefix, c.Assets)
 	return nil
 }
 
